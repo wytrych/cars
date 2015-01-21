@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+rect {
+	fill:black;
+}
+#ulica rect {
+	opacity:.5;
+}
+.text {
+	margin-left:10%;
+	margin-top:10%;
+	padding:1em;
+	font-family: Arial;
+	font-weight: bold;
+	//display:inline-block;
+	border:2px black solid;
+	float:left;
+	line-height:2em;
+}
+p.image {
+	display:inline-block;
+	float:right;
+}
+</style>
+</head>
+<body>
+<div class="text" id="panel">
+<table>
+	<tr><td>Add stop on line (0,96): </td><td><input type="text" id="stop" /></td><td> <input type="button" onclick="putLine()" value="Alter" /></td></tr>
+	<tr><td>Car adding frequency (ms): </td><td><input type="text" id="addSpeed" value="500" /></td><td rowspan="6"><input type="button" onclick="updateValues()" value="Update" /></td></tr>
+	<tr><td>Primary slow factor</td><td><input type="text" id="slow1" value="0.85" /></td></tr>
+	<tr><td>Secondary slow factor</td><td><input type="text" id="slow2" value="0.5" /></td></tr>
+	<tr><td>Acceleration factor</td><td><input type="text" id="accel" value="1.07" /></td></tr>
+	<tr><td>Collision distance</td><td><input type="text" id="distance" value="30" /></td></tr>
+	<tr><td>Show grid</td><td><input type="checkbox" id="grid" checked /></td></tr>
+	<tr><td>&nbsp;</td><td><input type="button" value="Delete all cars" onclick="panic()" /></td></tr>
+</table>
+</div>
+<p class="image">
+<svg id="plansza" viewport="0 0 400 400" width="600" height="700" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+	<defs>
+		<clipPath id="zaslona">
+			<rect x="0" y="200" width="500" height="350" />
+		</clipPath>
+	</defs>
+	<g id="ulica"></g>
+	<!--<g clip-path="url(#zaslona)" id="plotno"></g>-->
+	<g id="plotno"></g>
+</svg>
+</p>
+<script src="d3.js"></script>
+<script>
+
+var globalId = 0,samWidth = 25, samHeight = 50;
+var rys = d3.select("#plotno");
+var samochody = [];
+var ulica = [];
+var ulicaInit = [];
+kwadracik = [];
+var queue = false;
+
+var addingSpeed = 500;
+var zwolnienieFactor = .85;
+var przyspieszenieFactor = .5;
+var przyspieszenieKorekta = 1.07;
+var distance = 30;
+
+
+document.getElementById("panel").onkeypress = function(e) {
+	if (e.keyCode == 13)
+		updateValues();
+}
+	
+
+updateValues = function() {
+	if (showGrid && !document.getElementById("grid").checked) {
+		showGrid = false;
+		d3.select("#ulica").selectAll("rect").transition().attr("style","opacity:0");
+	} else if (!showGrid && document.getElementById("grid").checked) {
+		showGrid = true;
+		d3.select("#ulica").selectAll("rect").transition().attr("style","opacity:.1");
+	}
+	addingSpeed = +document.getElementById("addSpeed").value;
+	zwolnienieFactor = +document.getElementById("slow1").value;
+	przyspieszenieFactor = +document.getElementById("slow2").value;
+	przyspieszenieKorekta = +document.getElementById("accel").value;
+	distance = +document.getElementById("distance").value;
+
+}
+
+for (var j = 0; j < 3; j++ ) {
+	ulica[j] = [];
+	ulicaInit[j] = [];
+	for (var i = 0; i<=96; i++) {
+		ulica[j][96-i] = false;
+		ulicaInit[j][96-i] = false;
+		
+		kwadracik[96-i] = d3.select("#ulica")
+			.append("rect")
+			.attr("x",175)
+			.attr("y",i*5+120)
+			.attr("width",100)
+			.attr("height",4)
+			.attr("style","opacity:.1");
+	}
+}
+
+//ulicaInit[0][30] = true;
+
+przerysuj = function() {
+	if (showGrid) {
+		for (var i = 1; i<=96; i++) {
+			if (ulica[0][i])
+				kwadracik[i].transition().duration(20).attr("style","opacity:1");
+			else
+				kwadracik[i].transition().duration(20).attr("style","opacity:.1");
+		}
+	}
+}
+
+znajdzPozycje = function() {
+	queue = false;
+	for (var i = 0; i<= 96; i++) 
+		ulica[0][i] = (ulicaInit[0][i]) ? true : false;
+
+	samochody.forEach(function(d) {
+		var poz = Math.floor((d.y-samHeight)/5);
+		if (poz < 15)
+			queue = true;
+		ulica[0][poz] = true;
+	});
+}
+var showGrid = true;
+
+
+
+var Samochod = function(pas) {
+	this.x = 200+100*pas;
+	this.y = 0;
+	this.predkosc = 2+Math.round(Math.random()*250)/100;
+	this.originalSpeed = this.predkosc;
+	this.przyspieszenie = 1;
+	this.pas = pas;
+	this.poprzedniaBliskosc = 100;
+	
+	this.prezentacja = rys.append("rect")
+		.attr("id","S"+(globalId++))
+		.attr("x",this.x)
+		.attr("y",600-this.y)
+		.attr("width",samWidth)
+		.attr("height",samHeight);
+
+	this.zwolnij = function(bliskosc) {
+		if (bliskosc < this.poprzedniaBliskosc) 
+			this.przyspieszenie *= zwolnienieFactor-(1/(Math.pow(bliskosc,1)+1)*.4);	
+		else if ((this.predkosc * przyspieszenieKorekta) < this.originalSpeed)
+			this.przyspieszenie = przyspieszenieKorekta;
+		this.poprzedniaBliskosc = bliskosc;
+		//console.log(this.przyspieszenie);
+	}
+
+	this.przyspiesz = function() {
+		poprzedniaBliskosc = 100;
+		if (this.predkosc < 1)
+			this.predkosc = 1;
+		var change = 1+przyspieszenieFactor*(1-this.predkosc/this.originalSpeed);
+		if ((this.predkosc*change) < this.originalSpeed) {
+			this.przyspieszenie = change;
+			//console.log("Przyspieszam",this.prezentacja.attr("id"),this.predkosc,change,this.originalSpeed);
+		} else {
+			this.przyspieszenie = 1;
+			this.predkosc = this.originalSpeed;
+		}
+
+	}
+
+	this.move = function() {
+		var isColision = false;
+		for (var i = 0; i<distance; i++) {
+			var index = Math.floor((this.y)/5)+2+i;
+			if (index < 96 && ulica[this.pas][index]) {
+				this.zwolnij(i);
+				isColision = true;
+				break;
+			}
+		}
+		if (!isColision)
+			this.przyspiesz();
+
+		this.predkosc *= this.przyspieszenie;
+		this.przyspieszenie = 1;
+		this.y += this.predkosc;
+		var temp = this.y;
+		this.prezentacja.transition().ease("linear").duration(99).attr("y",600-this.y);
+		this.y %= 600;
+		if (this.y < temp) {
+			//this.prezentacja.transition().duration(0).attr("y",600-this.y);
+			this.killMe();
+		}
+	}
+
+	this.killMe = function() {
+		var id = this.prezentacja.attr("id");
+		rys.select("#"+id).remove();
+		delete samochody[parseInt(id.slice(1),10)];
+	}
+
+	//this.prezentacja.on("click",function() {ulicaInit[0][30] = false; });
+
+
+	return this;
+}
+
+
+dodawajSamochody = setInterval(function() {
+		if (!queue)
+			samochody[globalId] = new Samochod(0);
+		
+},addingSpeed);
+
+/*rys.append("rect")
+	.attr("x",100)
+	.attr("y",200)
+	.attr("width",50)
+	.attr("height",50)
+	.attr("style","fill:black")
+	.on("click",function() { ulicaInit[0][90] = !ulicaInit[0][90]; });*/
+
+function putLine() {
+	var no = parseInt(document.getElementById('stop').value);
+	ulicaInit[0][no] = !ulicaInit[0][no];
+}
+
+panic = function() {
+	samochody.forEach(function(car) {car.killMe();});
+}
+
+keyframe = setInterval(function() {
+		samochody.forEach(function(d) {
+			d.move(); 
+		});
+		znajdzPozycje();
+		przerysuj();
+},25);
+
+
+
+</script>
+</body>
+</html>
